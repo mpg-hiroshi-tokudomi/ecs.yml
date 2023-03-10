@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "The template used for JumpStart hands-on. https://amazon.awsapps.com/workdocs/index.html#/document/dd04bcec87fb27082dad61f1f36493e08758fb6c3b31c36eb66ab1c85d0d8e01"
+
+Parameters:
+  UserNamePrefix:
+    Type: String
+
+Resources:
+# ------------------------------
+# VPC
+# *This part is implemented with a "Creation Wizard" in the hands-on.
+# ------------------------------
+  # VPC/InternetGateway
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub "handson-${UserNamePrefix}-vpc"
+      CidrBlock: "10.0.0.0/16"
+  InternetGateway: 
+    Type: "AWS::EC2::InternetGateway"
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub "handson-${UserNamePrefix}-igw"
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId : !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Subnet
+  # to realize MultiAZ, create 2 PublicSubnets and 2 PrivateSubnets.
+  PublicSubnetA:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      Tags: 
+        - Key: Name
+          Value: !Sub 
+            - "handson-${UserNamePrefix}-subnet-public1-${AZ}"
+            - AZ: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+      CidrBlock: "10.0.0.0/20"
+  PublicSubnetB:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      Tags: 
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-subnet-public2-${AZ}"
+            - AZ: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      CidrBlock: "10.0.16.0/20"
+  PrivateSubnetA:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      Tags: 
+        - Key: Name
+          Value: !Sub 
+            - "handson-${UserNamePrefix}-subnet-private1-${AZ}"
+            - AZ: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+      CidrBlock: "10.0.128.0/20"
+  PrivateSubnetB:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      Tags: 
+        - Key: Name
+          Value: !Sub 
+            - "handson-${UserNamePrefix}-subnet-private2-${AZ}"
+            - AZ: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      CidrBlock: "10.0.144.0/20"
+
+  # NatGateway
+  # create NatGateway for PrivateSubnet to connect Internet.
+  NatGatewayEIPA: 
+    Type: "AWS::EC2::EIP"
+    Properties: 
+      Domain: vpc
+      Tags: 
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-eip-${AZ}"
+            - AZ: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+  NatGatewayA: 
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIPA.AllocationId 
+      Tags: 
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-nat-public1-${AZ}"
+            - AZ: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+      SubnetId: !Ref PublicSubnetA
+  NatGatewayEIPB: 
+    Type: "AWS::EC2::EIP"
+    Properties: 
+      Domain: vpc
+      Tags: 
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-eip-${AZ}"
+            - AZ: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+  NatGatewayB: 
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIPB.AllocationId 
+      Tags: 
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-nat-public2-${AZ}"
+            - AZ: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      SubnetId: !Ref PublicSubnetB
+
+  # Route Table(Public)
+  RouteTableForPublicSubnet:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "handson-${UserNamePrefix}-rtb-public"
+  RouteForPublicSubnet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+  AssocciateRouteTableForPublicSubnetA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnetA
+  AssocciateRouteTableForPublicSubnetB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnetB
+
+  # RouteTable(Private)
+  RouteTableForPrivateSubnetA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-rtb-private1-${AZ}"
+            - AZ: !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+  RouteForPrivateSubnetA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableForPrivateSubnetA
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayA
+  AssocciateRouteTableForPrivateSubnetA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTableForPrivateSubnetA
+      SubnetId: !Ref PrivateSubnetA
+  RouteTableForPrivateSubnetB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub
+            - "handson-${UserNamePrefix}-rtb-private2-${AZ}"
+            - AZ: !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+  RouteForPrivateSubnetB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableForPrivateSubnetB
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayB
+  AssocciateRouteTableForPrivateSubnetB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTableForPrivateSubnetB
+      SubnetId: !Ref PrivateSubnetB
+
+# ------------------------------
+# SecurityGroup
+# ------------------------------
+  # ALB
+  SecurityGroupForALB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "alb-${UserNamePrefix}"
+      GroupName: !Sub "alb-${UserNamePrefix}"
+      Tags:
+        - Key: Name
+          Value: !Sub "alb-${UserNamePrefix}"
+      SecurityGroupIngress:
+        - FromPort: "80"
+          IpProtocol: "tcp"
+          ToPort: "80"
+          CidrIp: "0.0.0.0/0"
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+      VpcId: !Ref VPC
+  
+  # WEB
+  SecurityGroupForWEB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "web-${UserNamePrefix}"
+      GroupName: !Sub "web-${UserNamePrefix}"
+      Tags:
+        - Key: Name
+          Value: !Sub "web-${UserNamePrefix}"
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref SecurityGroupForALB
+          FromPort: "80"
+          IpProtocol: "tcp"
+          ToPort: "80"
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+      VpcId: !Ref VPC
+
+  # RDS
+  SecurityGroupForRDS:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "db-${UserNamePrefix}"
+      GroupName: !Sub "db-${UserNamePrefix}"
+      Tags:
+        - Key: Name
+          Value: !Sub "db-${UserNamePrefix}"
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref SecurityGroupForWEB
+          FromPort: "3306"
+          IpProtocol: "tcp"
+          ToPort: "3306"
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: "-1"
+      VpcId: !Ref VPC
+
+# ------------------------------
+# Aurora MySQL
+# ------------------------------
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "db-subnet-${UserNamePrefix}"
+      DBSubnetGroupDescription: !Sub "db-subnet-${UserNamePrefix}"
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub "db-subnet-${UserNamePrefix}"
+  
+  # Aurora Cluster
+  # to realize MultiAZ, create 2 instances.
+  DBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties: 
+      DBClusterIdentifier: !Sub "db-${UserNamePrefix}"
+      DBClusterParameterGroupName: "default.aurora-mysql5.7"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref SecurityGroupForRDS
+      AvailabilityZones: 
+        - !Select [0, Fn::GetAZs: !Ref "AWS::Region"]
+        - !Select [1, Fn::GetAZs: !Ref "AWS::Region"]
+      Engine: "aurora-mysql"
+      EngineVersion: "5.7"
+      MasterUserPassword: "password"
+      MasterUsername: "admin"
+      DatabaseName: "todos"
+      StorageEncrypted: "true"
+  
+  # Writer Instance
+  RDSDBInstanceA:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceClass: "db.t3.small"
+      DBParameterGroupName: "default.aurora-mysql5.7"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: "aurora-mysql"
+      EngineVersion: "5.7"
+      PubliclyAccessible: "false"
+  
+  # Reader Instance
+  RDSDBInstanceB:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceClass: "db.t3.small"
+      DBParameterGroupName: "default.aurora-mysql5.7"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: "aurora-mysql"
+      EngineVersion: "5.7"
+      PubliclyAccessible: "false"
+
+# ------------------------------
+# ALB
+# ------------------------------
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: "application"
+      Scheme: "internet-facing"
+      Name: !Sub "alb-${UserNamePrefix}"
+      Tags:
+        - Key: Name
+          Value: !Sub "alb-${UserNamePrefix}"
+      IpAddressType: "ipv4"
+      Subnets: 
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups: 
+        - !Ref SecurityGroupForALB
+
+  ListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref ALB
+      Port: "80"
+      Protocol: "HTTP"
+  
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "target-${UserNamePrefix}"
+      Tags:
+        - Key: Name
+          Value: !Sub "target-${UserNamePrefix}"
+      Port: "80"
+      Protocol: "HTTP"
+      Matcher:
+        HttpCode: "200"
+      VpcId: !Ref VPC
+      TargetType: "ip"
+
+# ------------------------------
+# ECS
+# ------------------------------
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "cluster-${UserNamePrefix}"
+
+  # ECS LogGroup
+  ECSLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/ecs/task-def-${UserNamePrefix}"
+
+  # ECS TaskDefinition
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "256"
+      ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole"
+      Family: !Sub "task-def-${UserNamePrefix}"
+      Memory: "512"
+      NetworkMode: "awsvpc"
+      RequiresCompatibilities:
+        - "FARGATE"
+      RuntimePlatform: 
+        CpuArchitecture: "X86_64"
+        OperatingSystemFamily: "LINUX"
+      ContainerDefinitions:
+        - Name: "app"
+          Image: "イメージURI"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: "true"
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: "ecs"
+          Environment:
+            - Name: "MYSQL_HOST"
+              Value: !GetAtt DBCluster.Endpoint.Address
+            - Name: "MYSQL_USER"
+              Value: "admin"
+            - Name: "MYSQL_PASSWORD"
+              Value: "password"
+            - Name: "MYSQL_DB"
+              Value: "todos"
+          PortMappings:
+            - HostPort: "80"
+              Protocol: "tcp"
+              ContainerPort: "80"
+              Name: "app-80-tcp"
+              AppProtocol: "http"
+
+  # ECS Services
+  # to realize MultiAZ, create 2 services.
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      LaunchType: "FARGATE"
+      DesiredCount: "2"
+      TaskDefinition: !Ref ECSTaskDefinition
+      ServiceName: !Sub "service-${UserNamePrefix}"
+      LoadBalancers:
+        -
+          TargetGroupArn: !Ref TargetGroup
+          ContainerPort: "80"
+          ContainerName: "app"
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: "ENABLED"
+          SecurityGroups:
+            - !Ref SecurityGroupForWEB
+          Subnets:
+            - !Ref PrivateSubnetA
+            - !Ref PrivateSubnetB
+    DependsOn: 
+      - ListenerHTTP
+      - RDSDBInstanceA
